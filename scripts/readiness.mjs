@@ -167,7 +167,10 @@ export async function runReadiness(io) {
   await check('cliRelease', async () => {
     const pinned = JSON.parse(await io.readText('package-lock.json')).packages?.['node_modules/@programmable/launch'];
     const installed = JSON.parse(await io.readText('node_modules/.package-lock.json')).packages?.['node_modules/@programmable/launch'];
-    if (pinned?.resolved !== RELEASE_URL) wait(`package-lock.json pins ${pinned?.version ?? 'another CLI'}; pin official release ${PROGRAMMABLE.minimumCliVersion} (Task 10)`);
+    // The official release exists, so any other pin is wrong, not pending: older CLIs pack for the legacy Router.
+    if (pinned?.resolved !== RELEASE_URL) {
+      throw Error(`package-lock.json pins @programmable/launch ${pinned?.version ?? 'from another source'}, not the official release ${PROGRAMMABLE.minimumCliVersion}; pin ${RELEASE_URL}`);
+    }
     if (installed?.resolved !== pinned.resolved || installed?.integrity !== pinned.integrity) {
       throw Error('node_modules does not match package-lock.json; run npm ci --ignore-scripts');
     }

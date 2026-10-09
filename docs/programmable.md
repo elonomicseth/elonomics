@@ -1,6 +1,6 @@
 # Programmable integration for Elonomics
 
-This research covers **Ethereum Mainnet, chain ID 1** only. It was checked on 7 October 2026 and updated on 8 October 2026 after Programmable activated profile `3.6.0`. Elonomics uses the **Custom Launch V3** path, profile `3.6.0`, the `@programmable/launch` CLI `4.1.3`, and compiler `0.8.26+commit.8a97fa7a`. The API version, the profile, and the CLI are distinct identities. [Ethereum capabilities](https://api.programmable.market/v3/capabilities), [API and CLI reference](https://programmable.market/developers/custom-launch-api-v1.md).
+This research covers **Ethereum Mainnet, chain ID 1** only. It was checked on 7 October 2026, updated on 8 October 2026 after Programmable activated profile `3.6.0`, and updated on 9 October 2026 for CLI `4.1.4` and the successor Router. Elonomics uses the **Custom Launch V3** path, profile `3.6.0`, the `@programmable/launch` CLI `4.1.4`, and compiler `0.8.26+commit.8a97fa7a`. The API version, the profile, and the CLI are distinct identities. [Ethereum capabilities](https://api.programmable.market/v3/capabilities), [API and CLI reference](https://programmable.market/developers/custom-launch-api-v1.md).
 
 ## Why the token is created through a deployment graph
 
@@ -28,13 +28,13 @@ complete source and configuration
 → pending_review: manual review by the Programmable team (target 24 hours from manualReview.submittedAt)
 → approval: 24-hour window until manualReview.expiresAt
 → Start launch (wallet handoff or POST /v1/custom-launch-reviews/start)
-→ wallet action prepared (at most one hour, never past expiresAt)
+→ wallet action prepared (CLI 4.1.4 requests: signing up to 24 hours after approval; never past expiresAt)
 → transaction review in the wallet
 → broadcast by the wallet before launchDeadline
 → finalized
 ```
 
-Submitting also creates a manual review by the Programmable team. Its target is 24 hours from `manualReview.submittedAt`; after that, `reviewOverdue` is true and the request stays open, with no automatic approval or rejection. The `pending_review` status means waiting for that review and has no wallet action. Approval opens a separate 24-hour window that ends at `manualReview.expiresAt`. When the controller is ready, it chooses **Start launch** in the wallet handoff or calls `POST /v1/custom-launch-reviews/start` with the same wallet API key and the JSON `{"chainId": "1", "launchId": "<request ID>"}`; the response contains `launchRequestedAt` and `launchDeadline`. The prepared transaction is valid for at most one hour and never past `manualReview.expiresAt`; starting again is idempotent and does not extend any window. Signing must be completed before `launchDeadline`. Reissuing a permit for a transaction that was issued and then expired is not supported: keep the request ID and receipt, then follow the [recovery guide](https://programmable.market/developers/custom-launch-recovery-v1.md) (the `request_new_review` action means requesting a new approval).
+Submitting also creates a manual review by the Programmable team. Its target is 24 hours from `manualReview.submittedAt`; after that, `reviewOverdue` is true and the request stays open, with no automatic approval or rejection. The `pending_review` status means waiting for that review and has no wallet action. Approval opens a separate 24-hour window that ends at `manualReview.expiresAt`. When the controller is ready, it chooses **Start launch** in the wallet handoff or calls `POST /v1/custom-launch-reviews/start` with the same wallet API key and the JSON `{"chainId": "1", "launchId": "<request ID>"}`; the response contains `launchRequestedAt` and `launchDeadline`. For a request packed with CLI 4.1.4, the prepared transaction can be signed up to 24 hours after approval according to Programmable's release notes, and never past `manualReview.expiresAt`; requests packed with CLI 4.1.3 or earlier keep the legacy Router and its one-hour transaction limit, and such a request that has not been started must be packed again for a new review. Starting again is idempotent and does not extend any window. Signing must be completed before `launchDeadline`. Reissuing a permit for a transaction that was issued and then expired is not supported: keep the request ID and receipt, then follow the [recovery guide](https://programmable.market/developers/custom-launch-recovery-v1.md) (the `request_new_review` action means requesting a new approval).
 
 Use the HTTPS `walletHandoffUrl` returned by the server while it is still valid. Before signing, check the chain, controller, destination Router, calldata, ETH value, and gas. Retries use the same request bytes and idempotency key; changes to the source or metadata require a new package. [V3 lifecycle reference](https://programmable.market/developers/custom-launch-api-v1.md).
 
@@ -51,7 +51,9 @@ The public documentation has several paths that must not be mixed:
 | Profile `3.3.0` | Legacy: old requests can be read and replayed exactly, new requests are rejected. This profile binds a platform fee of 1000 (0.10%). |
 | Profiles `3.4.0` and `3.5.0` | Not active for production in the capabilities at the time of research. |
 | Programmable trading route (profile `3.6.0`) | Programmable's own ETH route charges an extra 30 bps; does not apply to external routers. Onsite trading was disabled at the time of research. |
-| Ethereum manifest version 12 | Still lists profile `3.3.0` and a 0.10% platform fee; for new requests, the capabilities are what applies. |
+| Ethereum manifest version 12 | Still lists profile `3.3.0`, a 0.10% platform fee, and only the legacy Router; for new requests, the capabilities and the CLI release are what apply. |
+| CLI `4.1.3` or earlier on profile `3.6.0` | Packs requests for the legacy Router `0x8622DD5bAb44185f2A458ac90384Ac99248f8d56` with a one-hour transaction limit; an unstarted request of that kind must be packed again for a new review. |
+| CLI `4.1.4` on profile `3.6.0` | Packs requests for the successor Router `0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3`; signing up to 24 hours after approval according to Programmable's release notes. Used by this repository. |
 
 [V3 API reference](https://programmable.market/developers/custom-launch-api-v1.md), [fees by contract version](https://programmable.market/docs/developers/machine-readable/fee-versions.md), [current fees](https://programmable.market/docs/launch/economics.md).
 
@@ -64,7 +66,7 @@ The Elonomics contracts implement a **2% total fee**, with `inclusive-selected-t
 | Developer | 0.70% | 7000 |
 | Total | 2.00% | 20000 |
 
-The 0.30% Programmable share follows the Ethereum Custom Hook policy confirmed by the Programmable team on 7 October 2026. Since profile `3.6.0` became active, `/v3/capabilities` states `feePolicy.programmableHundredthsOfBip` 3000 for that profile, and CLI 4.1.3 binds 3000 in both `platformFeePolicy` and `platformFeeBinding` (a 1.70% project share of the 2% total). Manifest version 12 still lists 1000 (0.10%), which belongs to profile `3.3.0`. `scripts/launch.mjs` rejects `pack`/`validate` if the CLI is older than 4.1.3, or if the package is not profile `3.6.0` or binds anything other than 3000. The immutable platform recipient is `0x4957f49620AFf3Adbbe8195a4f633E49cc93376c`. Integer rounding can produce a difference of the smallest unit; the contract gives the division remainder to the reward fund.
+The 0.30% Programmable share follows the Ethereum Custom Hook policy confirmed by the Programmable team on 7 October 2026. Since profile `3.6.0` became active, `/v3/capabilities` states `feePolicy.programmableHundredthsOfBip` 3000 for that profile, and CLI 4.1.4 binds 3000 in both `platformFeePolicy` and `platformFeeBinding` (a 1.70% project share of the 2% total). Manifest version 12 still lists 1000 (0.10%), which belongs to profile `3.3.0`. `scripts/launch.mjs` rejects `pack`/`validate` if the CLI is older than 4.1.4, or if the package is not profile `3.6.0`, does not target the successor Router and GraphFactory, or binds anything other than 3000. The immutable platform recipient is `0x4957f49620AFf3Adbbe8195a4f633E49cc93376c`. Integer rounding can produce a difference of the smallest unit; the contract gives the division remainder to the reward fund.
 
 **The Launch Stamp does not certify fees.** The capabilities require per-launch fee path evidence before the platform can call that path enforced/verified. An arbitrary custom hook does not automatically earn that claim. The local implementation and tests prove the tested project behavior, but do not replace admission and server evidence for the final request. If the server rejects this accounting or demands a different fee policy, the configuration must be reviewed; do not assume the total fee can be raised silently. [V3 fee and evidence semantics](https://api.programmable.market/v3/capabilities).
 
@@ -74,11 +76,13 @@ Canonical bindings used by the project:
 
 | Contract | Address |
 | --- | --- |
-| Launch Stamp Router | `0x8622DD5bAb44185f2A458ac90384Ac99248f8d56` |
+| Launch Stamp Router (successor, CLI 4.1.4) | `0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3` |
 | Create2 Graph Factory | `0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887` |
 | Uniswap v4 PoolManager | `0x000000000004444c5dc75cB358380D2e3dE08A90` |
 
-The [Ethereum manifest](https://developers.programmable.family/api/v2/manifest) contains ABIs, runtime hashes, getter bindings, deployment evidence, and the finality policy. The project checker has matched all three runtime hashes and the Router binding. The check must be repeated before execution.
+The legacy Launch Stamp Router `0x8622DD5bAb44185f2A458ac90384Ac99248f8d56` only applies to requests packed with CLI 4.1.3 or earlier; it is not a destination for a new Elonomics launch. The GraphFactory is unchanged, so the launcher needs no change.
+
+The [Ethereum manifest](https://developers.programmable.family/api/v2/manifest) contains ABIs, runtime hashes, getter bindings, deployment evidence, and the finality policy. On 9 October 2026 it was still version 12 and listed only the legacy Router. The successor Router and its runtime hash `0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3` come from the official CLI 4.1.4 release. `npm run check:mainnet` checks that runtime hash on chain, reads the successor Router's `CHAIN_ID`, `GRAPH_FACTORY`, `POOL_MANAGER` and their runtime-hash getters, checks the GraphFactory and PoolManager hashes, and accepts the manifest's Router entry only if it is exactly the legacy or the successor Router with its own runtime hash and the same GraphFactory and PoolManager bindings. The check must be repeated before execution.
 
 A stamp states the provenance of a launch. Explore can index a valid finalized stamp even if market data is not yet available or the trading adapter does not support the pool. Third-party terminals decide their own ingestion process. API support for the ERC-20 quote format does not prove that a website trading route exists that can execute ELON/TSLAon; in the 8 October 2026 research, Ethereum website swap routes were only created for pools with native ETH as `currency0`. In the capabilities checked, onsite trading was **disabled**. Profile `3.6.0` also sets a 0.30% routing fee for trades through Programmable's own ETH route, on top of the 2% hook fee; this fee does not apply to external routers such as the Universal Router, and the ELON/TSLAon pool has no such route, so Programmable's revenue from ELON is only the 0.3% hook share. Deployment or indexing must not be presented as proof that swaps are ready to use on the website. [Ethereum indexing guide](https://programmable.family/developer-reference/ethereum-custom-hook), [capabilities onsiteTrading](https://api.programmable.market/v3/capabilities).
 

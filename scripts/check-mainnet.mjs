@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { decodeFunctionResult, encodeFunctionData, encodePacked, formatUnits, keccak256, parseAbi, parseEther } from 'viem';
-import { ADDRESSES as A, PROGRAMMABLE, ZAP_PATH } from './constants.mjs';
+import { ADDRESSES as A, LEGACY_ROUTER, PROGRAMMABLE, ZAP_PATH } from './constants.mjs';
 import { validateCapabilities, validateReadiness } from './programmable.mjs';
 
 const routescan = 'https://api.routescan.io/v2/network/mainnet/evm/1/etherscan/api';
 const manifestUrl = 'https://developers.programmable.family/api/v2/manifest';
 const apiBase = 'https://api.programmable.market';
 const genesisHash = '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3';
+// Expected runtime code hashes. The Router is the successor Router that CLI 4.1.4 packs new requests for.
 const hashes = {
-  programmableRouter: '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546',
+  programmableRouter: PROGRAMMABLE.routerRuntimeCodeHash,
   graphFactory: '0xd23692fae59331592048e71a96d4963e170ee56e449683dc9f7fa3f9470018b8',
   poolManager: '0x785f1014552b7ce7d5fb7d0c970ca60edee94fd00425d7ca21609acac7ce1293',
 };
@@ -28,6 +29,8 @@ const abi = parseAbi([
   'function CHAIN_ID() view returns (uint256)',
   'function GRAPH_FACTORY() view returns (address)',
   'function POOL_MANAGER() view returns (address)',
+  'function GRAPH_FACTORY_RUNTIME_CODE_HASH() view returns (bytes32)',
+  'function POOL_MANAGER_RUNTIME_CODE_HASH() view returns (bytes32)',
   'function quoteExactInput(bytes,uint256) returns (uint256)',
 ]);
 const equalAddress = (a, b) => a.toLowerCase() === b.toLowerCase();
@@ -46,6 +49,24 @@ function validatePool(pool, { token0, token1, fee }) {
   assert(equalAddress(pool.factory, A.v3Factory), 'Pool factory is not the canonical Uniswap v3 factory.');
   assert.equal(pool.fee, fee, `Pool fee must be ${fee}.`);
   assert(pool.liquidity > 0n, 'Pool has no active liquidity.');
+}
+
+// Manifest version 12 predates the successor Router and still lists the legacy Router. Accept exactly one of the two
+// known Router identities with its own runtime hash; the successor itself is proven on chain by runtime.programmableRouter.
+function validateManifestRouter(manifest) {
+  assert.equal(manifest.chainId, 1, 'Manifest chainId is not 1.');
+  const router = manifest.launchStampRouter;
+  const listed = equalAddress(router.address, A.programmableRouter) ? 'successor'
+    : equalAddress(router.address, LEGACY_ROUTER.address) ? 'legacy' : null;
+  assert(listed, 'Manifest lists an unknown Router.');
+  assert.equal(router.runtimeCodeHash, listed === 'successor' ? hashes.programmableRouter : LEGACY_ROUTER.runtimeCodeHash,
+    'Manifest replaces the Router runtime hash.');
+  for (const key of ['graphFactory', 'poolManager']) {
+    assert(equalAddress(router.bindings[key], A[key]), 'Manifest replaces a canonical binding.');
+    assert.equal(router.bindings[`${key}RuntimeCodeHash`], hashes[key], 'Manifest replaces a canonical runtime hash.');
+  }
+  return { listedRouter: router.address, listedRouterGeneration: listed,
+    ...(listed === 'legacy' ? { note: 'The manifest still lists only the legacy one-hour Router; the successor Router comes from the pinned CLI and is checked on chain by runtime.programmableRouter and programmableBindings.' } : {}) };
 }
 
 async function fetchJson(url, options = {}) {
@@ -113,8 +134,26 @@ if (process.argv.includes('--self-test')) {
     programmableTradeFeePolicy: { policyHash: PROGRAMMABLE.tradeFeePolicyHash } };
   validateReadiness(readyz);
   assert.throws(() => validateReadiness({ ...readyz, publicProfile: { currentWriteProfileVersion: '3.3.0' } }));
+  const manifest = { chainId: 1, launchStampRouter: { address: A.programmableRouter, runtimeCodeHash: hashes.programmableRouter,
+    bindings: { graphFactory: A.graphFactory, graphFactoryRuntimeCodeHash: hashes.graphFactory,
+      poolManager: A.poolManager, poolManagerRuntimeCodeHash: hashes.poolManager } } };
+  assert.equal(validateManifestRouter(manifest).listedRouterGeneration, 'successor');
+  const legacy = structuredClone(manifest);
+  Object.assign(legacy.launchStampRouter, { address: LEGACY_ROUTER.address, runtimeCodeHash: LEGACY_ROUTER.runtimeCodeHash });
+  assert.equal(validateManifestRouter(legacy).listedRouterGeneration, 'legacy');
+  for (const change of [m => { m.chainId = 4663; }, m => { m.launchStampRouter.address = A.graphFactory; },
+    m => { m.launchStampRouter.runtimeCodeHash = LEGACY_ROUTER.runtimeCodeHash; },
+    m => { m.launchStampRouter.bindings.graphFactory = A.poolManager; },
+    m => { m.launchStampRouter.bindings.poolManagerRuntimeCodeHash = hashes.graphFactory; }]) {
+    const changed = structuredClone(manifest);
+    change(changed);
+    assert.throws(() => validateManifestRouter(changed));
+  }
+  const crossed = structuredClone(legacy);
+  crossed.launchStampRouter.runtimeCodeHash = hashes.programmableRouter;
+  assert.throws(() => validateManifestRouter(crossed));
   await assert.rejects(() => rpc('eth_sendRawTransaction', ['0x']));
-  console.log('PASS: pool bindings, fee, liquidity, zap route, capabilities 3.6.0, and read-only RPC.');
+  console.log('PASS: pool bindings, fee, liquidity, zap route, capabilities 3.6.0, manifest Router identity, and read-only RPC.');
 } else {
   const config = JSON.parse(await readFile(new URL('../launch.config.json', import.meta.url), 'utf8'));
   const window = config.oracleWindowSeconds;
@@ -218,22 +257,17 @@ if (process.argv.includes('--self-test')) {
     await check('programmableBindings', async () => {
       assert.equal(await read(A.programmableRouter, 'CHAIN_ID'), 1n, 'Router CHAIN_ID is not 1.');
       assert(equalAddress(await read(A.programmableRouter, 'GRAPH_FACTORY'), A.graphFactory), 'GRAPH_FACTORY binding differs.');
+      assert.equal(await read(A.programmableRouter, 'GRAPH_FACTORY_RUNTIME_CODE_HASH'), hashes.graphFactory, 'GRAPH_FACTORY runtime hash binding differs.');
       assert(equalAddress(await read(A.programmableRouter, 'POOL_MANAGER'), A.poolManager), 'POOL_MANAGER binding differs.');
-      return { chainId: 1 };
+      assert.equal(await read(A.programmableRouter, 'POOL_MANAGER_RUNTIME_CODE_HASH'), hashes.poolManager, 'POOL_MANAGER runtime hash binding differs.');
+      return { router: A.programmableRouter, chainId: 1, graphFactory: A.graphFactory, poolManager: A.poolManager };
     });
   }
 
   await check('manifest', async () => {
     const manifest = await fetchJson(manifestUrl);
-    assert.equal(manifest.chainId, 1, 'Manifest chainId is not 1.');
-    const router = manifest.launchStampRouter;
-    assert(equalAddress(router.address, A.programmableRouter), 'Manifest replaces the canonical Router.');
-    assert.equal(router.runtimeCodeHash, hashes.programmableRouter, 'Manifest replaces the canonical Router hash.');
-    for (const key of ['graphFactory', 'poolManager']) {
-      assert(equalAddress(router.bindings[key], A[key]), 'Manifest replaces a canonical binding.');
-      assert.equal(router.bindings[`${key}RuntimeCodeHash`], hashes[key], 'Manifest replaces a canonical runtime hash.');
-    }
-    return { url: manifestUrl, version: manifest.manifestVersion, generatedAt: manifest.generatedAt };
+    const router = validateManifestRouter(manifest);
+    return { url: manifestUrl, version: manifest.manifestVersion, generatedAt: manifest.generatedAt, ...router };
   });
   // Capabilities and readyz are the authority for profile and fee; the manifest above still lists profile 3.3.0.
   await check('capabilities', async () => validateCapabilities(await fetchJson(`${apiBase}/v3/capabilities`)));

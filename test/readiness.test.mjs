@@ -44,14 +44,17 @@ const capabilities = () => ({
 const launch = () => ({
   nonce: NONCE,
   launchProfile: { profileVersion: '3.6.0', platformFeePolicy: { programmableFeeHundredthsOfBip: '3000' },
-    programmableTradeFeePolicy: { ratePpm: '3000' } },
+    programmableTradeFeePolicy: { ratePpm: '3000' }, router: '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3',
+    routerRuntimeCodeHash: '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3',
+    graphFactory: '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887' },
   launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: '3000', economics: {
     buy: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' },
     sell: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' } } } },
 });
 
-const lock = (resolved = RELEASE_URL, integrity = 'sha512-release') => JSON.stringify({ packages: {
-  'node_modules/@programmable/launch': { version: '4.1.3', resolved, integrity } } });
+const OLD_RELEASE_URL = 'https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v4.1.3/programmable-launch-4.1.3.tgz';
+const lock = (resolved = RELEASE_URL, integrity = 'sha512-release', version = '4.1.4') => JSON.stringify({ packages: {
+  'node_modules/@programmable/launch': { version, resolved, integrity } } });
 
 /** Every dependency of runReadiness, ready to launch unless a test changes it. */
 function io(change = {}) {
@@ -73,7 +76,7 @@ function io(change = {}) {
     ...change.responses,
   };
   return {
-    now: NOW, nodeVersion: '24.14.0', cliVersion: '4.1.3', env: { PROGRAMMABLE_API_KEY: SECRET_KEY },
+    now: NOW, nodeVersion: '24.14.0', cliVersion: '4.1.4', env: { PROGRAMMABLE_API_KEY: SECRET_KEY },
     readText: async file => {
       if (files[file] === undefined) throw Error(`ENOENT: ${file}`);
       return files[file];
@@ -109,16 +112,16 @@ test('readiness passes only when every input, service, file and release is ready
   assert.match(formatLine(results[0]), /^PASS config +config is complete and consistent$/);
 });
 
-test('readiness waits for missing inputs, unpublished sources and the CLI release without printing secrets', async () => {
+test('readiness waits for missing inputs and unpublished sources without printing secrets', async () => {
   const pending = io({
     config: { ...config(), zapQuote: null, imageSourcePath: null, publicSourceRevision: null },
-    files: { 'launch.json': undefined, 'package-lock.json': lock('https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v3.3.9/programmable-launch-3.3.9.tgz') },
+    files: { 'launch.json': undefined },
     responses: { 'https://api.github.com/repos/example/elonomics': { status: 404, body: {} } },
     io: { rpc: async () => { throw Error(`connect failed ${SECRET_RPC}`); } },
   });
   const results = await runReadiness(pending);
   assert.deepEqual(statuses(results), { config: 'WAIT', zapQuote: 'WAIT', runtime: 'PASS', programmable: 'PASS', wallet: 'WAIT',
-    source: 'WAIT', image: 'WAIT', website: 'PASS', apiKey: 'PASS', package: 'WAIT', cliRelease: 'WAIT' });
+    source: 'WAIT', image: 'WAIT', website: 'PASS', apiKey: 'PASS', package: 'WAIT', cliRelease: 'PASS' });
   assert.equal(exitCode(results), 2);
   const printed = results.map(formatLine).join('\n');
   assert.ok(!printed.includes(SECRET_KEY) && !printed.includes(SECRET_RPC), printed);
@@ -144,8 +147,20 @@ test('readiness fails on stale quotes, old runtimes, wrong profiles, low balance
     source: 'FAIL', image: 'PASS', website: 'FAIL', apiKey: 'PASS', package: 'FAIL', cliRelease: 'FAIL' });
   assert.equal(exitCode(results), 1);
   assert.match(results.find(r => r.id === 'wallet').detail, /need 0\.04 ETH/);
-  assert.match(results.find(r => r.id === 'runtime').detail, /4\.1\.3 or newer/);
+  assert.match(results.find(r => r.id === 'runtime').detail, /4\.1\.4 or newer/);
   assert.match(results.find(r => r.id === 'package').detail, /permit window/);
+
+  // The official 4.1.4 release exists: a 4.1.3 pin, which packs for the legacy Router, fails even when node_modules matches it.
+  const oldPin = lock(OLD_RELEASE_URL, 'sha512-old', '4.1.3');
+  const oldCli = await runReadiness(io({ files: { 'package-lock.json': oldPin, 'node_modules/.package-lock.json': oldPin } }));
+  assert.equal(statuses(oldCli).cliRelease, 'FAIL');
+  assert.match(oldCli.find(r => r.id === 'cliRelease').detail, /pins @programmable\/launch 4\.1\.3, not the official release 4\.1\.4/);
+  const legacyPackage = launch();
+  legacyPackage.launchProfile.router = '0x8622DD5bAb44185f2A458ac90384Ac99248f8d56';
+  legacyPackage.launchProfile.routerRuntimeCodeHash = '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546';
+  const legacy = await runReadiness(io({ files: { 'launch.json': JSON.stringify(legacyPackage) } }));
+  assert.equal(statuses(legacy).package, 'FAIL');
+  assert.match(legacy.find(r => r.id === 'package').detail, /successor Router/);
 
   // After pack: a newer quote, an uncommitted logo, a relabelled quote time or another session's package must each block submission.
   const requoted = config();

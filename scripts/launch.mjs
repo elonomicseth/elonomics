@@ -29,17 +29,19 @@ export function assertPlatformFeeBinding(launch) {
   }
 }
 
-// CLI 3.3.9 can only pack profile 3.3.0 (0.10%), which Programmable no longer accepts for new requests.
+// CLI 3.3.9 can only pack profile 3.3.0 (0.10%), which Programmable no longer accepts for new requests, and CLI 4.1.3
+// binds profile 3.6.0 requests to the legacy one-hour Router; 4.1.4 packs them for the successor Router.
 export function assertCliVersion(version = PACKAGE_VERSION) {
   const want = PROGRAMMABLE.minimumCliVersion.split('.').map(Number);
   const have = String(version).split('.').map(Number);
   const first = have.findIndex((part, index) => part !== want[index]);
   if (have.length !== 3 || have.some(Number.isNaN) || (first !== -1 && have[first] < want[first])) {
-    throw Error(`@programmable/launch ${version} cannot pack profile ${PROGRAMMABLE.profileVersion}; install ${PROGRAMMABLE.minimumCliVersion} or newer`);
+    throw Error(`@programmable/launch ${version} cannot pack profile ${PROGRAMMABLE.profileVersion} for the successor Router; install ${PROGRAMMABLE.minimumCliVersion} or newer`);
   }
 }
 
-// The only package this repository may submit: profile 3.6.0, 2% total per side, 0.30% of it for Programmable.
+// The only package this repository may submit: profile 3.6.0, 2% total per side, 0.30% of it for Programmable,
+// bound to the successor Router and to the GraphFactory that ElonomicsLauncher accepts.
 export function assertPackageProfile(launch) {
   assertPlatformFeeBinding(launch);
   const economics = launch.launchProfileSelection?.platformFeeBinding?.economics;
@@ -49,6 +51,12 @@ export function assertPackageProfile(launch) {
     || ['buy', 'sell'].some(side => economics?.[side]?.effectiveTotalHundredthsOfBip !== '20000'
       || economics?.[side]?.projectHundredthsOfBip !== '17000')) {
     throw Error(`Package is not a profile ${PROGRAMMABLE.profileVersion} request with a 2% total and a 0.30% platform share; do not submit launch.json`);
+  }
+  const profile = launch.launchProfile;
+  if (String(profile.router).toLowerCase() !== A.programmableRouter.toLowerCase()
+    || profile.routerRuntimeCodeHash !== PROGRAMMABLE.routerRuntimeCodeHash
+    || String(profile.graphFactory).toLowerCase() !== A.graphFactory.toLowerCase()) {
+    throw Error(`Package targets Router ${profile.router ?? 'none'}, not the successor Router ${A.programmableRouter} with GraphFactory ${A.graphFactory}; do not submit launch.json, pack again with @programmable/launch ${PROGRAMMABLE.minimumCliVersion} or newer`);
   }
 }
 

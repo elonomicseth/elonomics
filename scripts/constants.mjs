@@ -4,7 +4,8 @@ import { encodePacked } from 'viem';
 export const ADDRESSES = Object.freeze({
   poolManager: '0x000000000004444c5dc75cB358380D2e3dE08A90',
   graphFactory: '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887',
-  programmableRouter: '0x8622DD5bAb44185f2A458ac90384Ac99248f8d56',
+  // Successor Launch Stamp Router that CLI 4.1.4 binds into new profile 3.6.0 requests: the wallet's destination.
+  programmableRouter: '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3',
   platformRecipient: '0x4957f49620AFf3Adbbe8195a4f633E49cc93376c',
   quote: '0xf6b1117ec07684D3958caD8BEb1b302bfD21103f',
   reward: '0xc9eef266834730340A55B6CC24621B31BAF55581',
@@ -32,6 +33,15 @@ export const ZAP_PATH = encodePacked(['address', 'uint24', 'address', 'uint24', 
 export const PROGRAMMABLE = Object.freeze({
   profileVersion: '3.6.0',
   platformFeeHundredthsOfBip: '3000',
-  minimumCliVersion: '4.1.3',
+  minimumCliVersion: '4.1.4',
+  // Runtime code hash of ADDRESSES.programmableRouter, as pinned by CLI 4.1.4 (ROUTER_24H_RUNTIME_CODE_HASH).
+  routerRuntimeCodeHash: '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3',
   tradeFeePolicyHash: 'sha256:5956cdeee628ba84dfa5214efd532011e59c202e4e1c1830b1eca279d58d79d3',
+});
+
+// Legacy one-hour Router that CLI 4.1.3 and earlier bound into requests. Never a destination for a new launch;
+// kept only because Programmable manifest version 12 still lists this Router, and check-mainnet must match it exactly.
+export const LEGACY_ROUTER = Object.freeze({
+  address: '0x8622DD5bAb44185f2A458ac90384Ac99248f8d56',
+  runtimeCodeHash: '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546',
 });

@@ -5,6 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { units18, validateConfig, inputDigest, assertPlatformFeeBinding, assertFreshZapQuote, assertCliVersion, assertPackageProfile, sessionAction } from '../scripts/launch.mjs';
 
+// Literal values from the official CLI 4.1.4 release (ROUTER_24H and its runtime code hash), not read from constants.mjs.
+const SUCCESSOR_ROUTER = '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3';
+const SUCCESSOR_ROUTER_HASH = '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3';
+const GRAPH_FACTORY = '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887';
+
 test('decimal amounts are exact and reject rounded inputs', () => {
   assert.equal(units18('1.000000000000000001', 'amount'), 1000000000000000001n);
   for (const value of ['0', '-1', '01', '1e9', '0.0000000000000000001', 1, ' 1']) {
@@ -18,7 +23,7 @@ test('production configuration refuses incomplete real launch inputs', async () 
   assert.throws(() => validateConfig({ ...config, launchWallet: null }), /launchWallet/);
 });
 
-test('package must bind the 0.30% platform fee the hook charges in every policy field', () => {
+test('package must bind the 0.30% platform fee the hook charges in every policy field and target the successor Router', () => {
   const bound = (policy, binding = policy) => ({
     launchProfile: { platformFeePolicy: { programmableFeeHundredthsOfBip: policy } },
     launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: binding } },
@@ -27,12 +32,14 @@ test('package must bind the 0.30% platform fee the hook charges in every policy 
   assert.throws(() => assertPlatformFeeBinding(bound('1000')), /binds platform fee 1000/);
   assert.throws(() => assertPlatformFeeBinding(bound('3000', '1000')), /3000, 1000/);
   assert.throws(() => assertPlatformFeeBinding({}), /binds platform fee none/);
-  assert.doesNotThrow(() => assertCliVersion('4.1.3'));
+  assert.doesNotThrow(() => assertCliVersion('4.1.4'));
   assert.doesNotThrow(() => assertCliVersion('4.2.0'));
-  assert.throws(() => assertCliVersion('3.3.9'), /4\.1\.3 or newer/);
+  assert.throws(() => assertCliVersion('4.1.3'), /4\.1\.4 or newer/);
+  assert.throws(() => assertCliVersion('3.3.9'), /4\.1\.4 or newer/);
   const pkg = (profileVersion, fee = '3000') => ({
     launchProfile: { profileVersion, platformFeePolicy: { programmableFeeHundredthsOfBip: fee },
-      ...(profileVersion === '3.6.0' ? { programmableTradeFeePolicy: { ratePpm: '3000' } } : {}) },
+      ...(profileVersion === '3.6.0' ? { programmableTradeFeePolicy: { ratePpm: '3000' } } : {}),
+      router: SUCCESSOR_ROUTER, routerRuntimeCodeHash: SUCCESSOR_ROUTER_HASH, graphFactory: GRAPH_FACTORY },
     launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: fee, economics: Object.fromEntries(['buy', 'sell']
       .map(side => [side, { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: String(20000 - Number(fee)) }])) } },
   });
@@ -42,6 +49,18 @@ test('package must bind the 0.30% platform fee the hook charges in every policy 
   const noPolicy = pkg('3.6.0');
   noPolicy.launchProfile.programmableTradeFeePolicy = null;
   assert.throws(() => assertPackageProfile(noPolicy), /profile 3\.6\.0/);
+  // A CLI 4.1.3 package binds the legacy one-hour Router; it, or any other Router or factory, must be packed again.
+  for (const change of [{ router: '0x8622DD5bAb44185f2A458ac90384Ac99248f8d56',
+    routerRuntimeCodeHash: '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546' },
+  { routerRuntimeCodeHash: '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546' },
+  { router: undefined }, { graphFactory: '0x000000000004444c5dc75cB358380D2e3dE08A90' }]) {
+    const other = pkg('3.6.0');
+    Object.assign(other.launchProfile, change);
+    assert.throws(() => assertPackageProfile(other), /successor Router 0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3/);
+  }
+  const lowercase = pkg('3.6.0');
+  lowercase.launchProfile.router = SUCCESSOR_ROUTER.toLowerCase();
+  assert.doesNotThrow(() => assertPackageProfile(lowercase));
 });
 
 test('retry fingerprint covers bundled scripts, lockfile and image bytes', async () => {
