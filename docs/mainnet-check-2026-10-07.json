@@ -1,0 +1,139 @@
+{
+  "checkedAt": "2026-10-07T09:06:33.495Z",
+  "chainId": 1,
+  "readOnly": true,
+  "checks": {
+    "chain": {
+      "status": "pass",
+      "blockNumber": "26139439",
+      "blockHash": "0x2fbeb0750a68cc239c2e6437c07924bb5236a803580052a33a69d487b2966718",
+      "timestamp": 1791363203,
+      "chainIdMethod": "genesis + Ethereum namespace; Routescan does not provide eth_chainId"
+    },
+    "chainFreshness": {
+      "status": "unavailable",
+      "blockAgeSeconds": 791,
+      "maximumAgeSeconds": 300,
+      "reason": "Latest header too old or clock mismatch; an RPC that serves up-to-date data is needed."
+    },
+    "asset.SPCXon": {
+      "status": "pass",
+      "address": "0xc9eef266834730340a55b6cc24621b31baf55581",
+      "name": "SpaceX (Ondo Tokenized)",
+      "symbol": "SPCXon",
+      "decimals": 18,
+      "runtimeCodeHash": "0x9806c8207a455c012b2799be651ac0146d54866f92db90b502e5e2efa283bee9"
+    },
+    "asset.TSLAon": {
+      "status": "pass",
+      "address": "0xf6b1117ec07684D3958caD8BEb1b302bfD21103f",
+      "name": "Tesla (Ondo Tokenized)",
+      "symbol": "TSLAon",
+      "decimals": 18,
+      "runtimeCodeHash": "0x9806c8207a455c012b2799be651ac0146d54866f92db90b502e5e2efa283bee9"
+    },
+    "asset.USDC": {
+      "status": "pass",
+      "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "decimals": 6,
+      "runtimeCodeHash": "0xd80d4b7c890cb9d6a4893e6b52bc34b56b25335cb13716e0d1d31383e6b41505"
+    },
+    "quotePool": {
+      "status": "pass",
+      "address": "0x0461c60Ad5fC24cB1fc075b7f202095819De6944",
+      "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "token1": "0xc9eef266834730340A55B6CC24621B31BAF55581",
+      "fee": 10000,
+      "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      "liquidity": "245763628240421794",
+      "tick": 224978,
+      "observationCardinality": 1,
+      "observationCardinalityNext": 1,
+      "unlocked": true
+    },
+    "quotePool.oracle": {
+      "status": "pass",
+      "windowSeconds": 1800,
+      "arithmeticMeanTick": "224978",
+      "ready": true,
+      "warning": "Only one observation; the next swap can erase the history for this window. Increase capacity and wait for the history to fill."
+    },
+    "rewardPool": {
+      "status": "pass",
+      "address": "0x31227b50eCCDC9C589826AA2D9E7C5619B1895Da",
+      "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "token1": "0xf6b1117ec07684D3958caD8BEb1b302bfD21103f",
+      "fee": 10000,
+      "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      "liquidity": "48857156970519352",
+      "tick": 217006,
+      "observationCardinality": 48,
+      "observationCardinalityNext": 48,
+      "unlocked": true
+    },
+    "rewardPool.oracle": {
+      "status": "pass",
+      "windowSeconds": 1800,
+      "arithmeticMeanTick": "217006",
+      "ready": true
+    },
+    "swapRouter": {
+      "status": "pass",
+      "address": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+      "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+      "interface": "ISwapRouter exactInput with deadline"
+    },
+    "conversionQuote": {
+      "status": "pass",
+      "input": "1 SPCXon",
+      "output": "0.441542505989562195 TSLAon",
+      "executableGuarantee": false
+    },
+    "runtime.programmableRouter": {
+      "status": "pass",
+      "address": "0x8622DD5bAb44185f2A458ac90384Ac99248f8d56",
+      "codeHash": "0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546"
+    },
+    "runtime.graphFactory": {
+      "status": "pass",
+      "address": "0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887",
+      "codeHash": "0xd23692fae59331592048e71a96d4963e170ee56e449683dc9f7fa3f9470018b8"
+    },
+    "runtime.poolManager": {
+      "status": "pass",
+      "address": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+      "codeHash": "0x785f1014552b7ce7d5fb7d0c970ca60edee94fd00425d7ca21609acac7ce1293"
+    },
+    "programmableBindings": {
+      "status": "pass",
+      "chainId": 1
+    },
+    "manifest": {
+      "status": "pass",
+      "url": "https://developers.programmable.family/api/v2/manifest",
+      "version": "12",
+      "generatedAt": "2026-08-28T21:45:04Z"
+    },
+    "capabilities": {
+      "status": "pass",
+      "profile": {
+        "profileId": "programmable.direct-native-hook-graph.v1",
+        "profileRevision": 3,
+        "profileVersion": "3.3.0",
+        "productionLaunchAuthorized": true
+      },
+      "compiler": "0.8.26+commit.8a97fa7a",
+      "onsiteTrading": "disabled"
+    },
+    "readyz": {
+      "status": "unavailable",
+      "reason": "HTTP 503"
+    }
+  },
+  "provider": "Routescan Ethereum GET",
+  "blockConsistency": "Separate latest reads; not a single-block snapshot.",
+  "ready": false,
+  "scope": "Mainnet dependencies only; does not prove a complete launch configuration, an audit, wallet funding, or passing Programmable admission."
+}

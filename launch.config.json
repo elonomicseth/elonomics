@@ -1,0 +1,22 @@
+{
+  "chainId": 1,
+  "name": "Elonomics",
+  "symbol": "ELON",
+  "description": "Elonomics (ELON) is an Ethereum meme token with an ELON/TSLAon market. A 2% buy and sell hook fee allocates 1% to SPCXon rewards for eligible ELON holders, 0.3% to Programmable, and 0.7% to the developer. Rewards are funded by collected trading fees, converted through available liquidity, and distributed over 24 hours. Rewards vary with trading activity and conversion costs; they are not SpaceX corporate dividends. Elonomics is independent of Elon Musk, Tesla, SpaceX, and Ondo.",
+  "launchWallet": "0x9806a89bC79C8985fcF99A0c65D27193726B63C0",
+  "devRecipient": "0x6E55e3c0925c224ddFeF144E26573550F2BE1756",
+  "devBuyRecipient": "0x9806a89bC79C8985fcF99A0c65D27193726B63C0",
+  "totalSupply": "1000000000",
+  "initialFdvEth": "1.1",
+  "devBuyEth": "0.02",
+  "zapSlippageBps": 1000,
+  "zapQuote": null,
+  "website": "https://elonomics.xyz",
+  "x": "https://x.com/ElonomicsETH",
+  "imageSourcePath": "assets/elonomics.png",
+  "imageUri": "ipfs://bafybeifcryagcsvpym36yfjmarl5topoofdzumay6tsmjbn33g5qoogb54",
+  "publicSourceUrl": "https://github.com/elonomicseth/elonomics",
+  "publicSourceRevision": null,
+  "oracleWindowSeconds": 1800,
+  "maximumOracleSlippageBps": 100
+}
