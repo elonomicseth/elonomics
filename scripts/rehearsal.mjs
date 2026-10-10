@@ -2,11 +2,12 @@ import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { PACKAGE_VERSION, packLaunch, validateLaunchFile } from '@programmable/launch';
+import { PACKAGE_VERSION, packFreshLaunch, validateLaunchFile } from '@programmable/launch';
 import { build } from './build.mjs';
-import { assertCliVersion, assertPackageProfile, makePackConfig } from './launch.mjs';
+import { assertCliVersion, assertPackageProfile, hookPlatformRecipient, makePackConfig } from './launch.mjs';
 
-// Fixture identities exist only in this isolated offline rehearsal, never in launch.config.json.
+// Fixture identities exist only in this isolated rehearsal, never in launch.config.json. Like npm run pack, it packs
+// fresh: the CLI reads public /v3/capabilities for the current profile and treasury policy. Nothing is submitted.
 assertCliVersion();
 const output = await build();
 const root = process.cwd();
@@ -35,18 +36,27 @@ await writeFile(path.join(temporary, 'build/build-evidence.json'), JSON.stringif
 const configPath = path.join(temporary, 'programmable-launch.config.json');
 const launchPath = path.join(temporary, 'launch.json');
 await writeFile(configPath, JSON.stringify(makePackConfig(config, output, session)));
-const packed = await packLaunch({ configPath, outputPath: launchPath, receiptPath: path.join(temporary, 'receipt.json') });
+const packed = await packFreshLaunch({ configPath, outputPath: launchPath, receiptPath: path.join(temporary, 'receipt.json') });
 const validated = await validateLaunchFile({ launchPath, configPath });
 const first = await readFile(launchPath);
 const launch = JSON.parse(first);
-// The offline proof covers what may be submitted: profile 3.6.0 binding the hook's 0.30% share.
+// The proof covers what may be submitted: profile 3.6.0 binding the hook's 0.30% share to the current treasury.
 assertPackageProfile(launch);
-await packLaunch({ configPath, outputPath: launchPath, receiptPath: path.join(temporary, 'receipt-repeat.json') });
+// The recipient the request binds is the address compiled into the hook, not only the one in constants.mjs.
+const hookRecipient = hookPlatformRecipient(output);
+const claimBinding = launch.launchProfileSelection.platformFeeBinding.claimBinding;
+assert.equal(claimBinding.payoutRecipient, hookRecipient, 'Packed claim recipient differs from ElonomicsHook.platformRecipient');
+assert.equal(claimBinding.claimAuthority, hookRecipient, 'Packed claim authority differs from ElonomicsHook.platformRecipient');
+assert.equal(launch.launchProfile.programmableTradeFeePolicy.defaultCollection.recipient, hookRecipient,
+  'Current treasury policy recipient differs from ElonomicsHook.platformRecipient');
+await packFreshLaunch({ configPath, outputPath: launchPath, receiptPath: path.join(temporary, 'receipt-repeat.json') });
 assert.deepEqual(await readFile(launchPath), first, 'Exact retries must preserve request bytes');
-const result = { scope: 'OFFLINE FIXTURE ONLY; no real metadata, submission, deployment or fee certification',
+const result = { scope: 'FIXTURE ONLY; reads public capabilities like a fresh pack; no real metadata, submission, deployment or fee certification',
   temporary, cliVersion: PACKAGE_VERSION, profileVersion: launch.launchProfile.profileVersion, packed, validated,
-  deterministicRepack: true };
+  platformFeeRecipient: claimBinding.payoutRecipient, hookPlatformRecipient: hookRecipient,
+  tradeFeePolicyVersion: launch.launchProfile.programmableTradeFeePolicy.policyVersion, deterministicRepack: true };
 await writeFile('build/rehearsal-result.json', `${JSON.stringify(result, null, 2)}\n`);
 console.log(JSON.stringify({ scope: result.scope, cliVersion: result.cliVersion, profileVersion: result.profileVersion,
-  requestSha256: packed.requestSha256, reproducedFromConfig: validated.reproducedFromConfig, deterministicRepack: true,
-  report: 'build/rehearsal-result.json' }, null, 2));
+  requestSha256: packed.requestSha256, reproducedFromConfig: validated.reproducedFromConfig,
+  platformFeeRecipient: result.platformFeeRecipient, hookPlatformRecipient: result.hookPlatformRecipient,
+  tradeFeePolicyVersion: result.tradeFeePolicyVersion, deterministicRepack: true, report: 'build/rehearsal-result.json' }, null, 2));

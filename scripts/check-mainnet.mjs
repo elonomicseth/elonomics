@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { decodeFunctionResult, encodeFunctionData, encodePacked, formatUnits, keccak256, parseAbi, parseEther } from 'viem';
 import { ADDRESSES as A, LEGACY_ROUTER, PROGRAMMABLE, ZAP_PATH } from './constants.mjs';
-import { validateCapabilities, validateReadiness } from './programmable.mjs';
+import { cliTradeFeePolicies, validateCapabilities, validateReadiness } from './programmable.mjs';
 
 const routescan = 'https://api.routescan.io/v2/network/mainnet/evm/1/etherscan/api';
 const manifestUrl = 'https://developers.programmable.family/api/v2/manifest';
 const apiBase = 'https://api.programmable.market';
 const genesisHash = '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3';
-// Expected runtime code hashes. The Router is the successor Router that CLI 4.1.4 packs new requests for.
+// Expected runtime code hashes. The Router is the successor Router that CLI 4.1.4 and later pack new requests for.
 const hashes = {
   programmableRouter: PROGRAMMABLE.routerRuntimeCodeHash,
   graphFactory: '0xd23692fae59331592048e71a96d4963e170ee56e449683dc9f7fa3f9470018b8',
@@ -111,6 +111,13 @@ if (process.argv.includes('--self-test')) {
   for (const changed of [{ token1: A.reward }, { factory: A.swapRouter }, { fee: 3000 }, { liquidity: 0n }]) {
     assert.throws(() => validatePool({ ...valid, ...changed }, POOLS[0][1]));
   }
+  // Policy bodies as the installed CLI release publishes them: the current treasury policy and the earlier one.
+  const policies = await cliTradeFeePolicies();
+  const current = policies.find(p => p.policyHash === PROGRAMMABLE.tradeFeePolicyHash);
+  const earlier = policies.find(p => p.policyHash !== PROGRAMMABLE.tradeFeePolicyHash);
+  assert(current && earlier, 'The installed CLI does not publish the pinned routed-trade fee policy.');
+  const tradeFeePolicy = () => ({ policyHash: current.policyHash, policy: structuredClone(current.policy),
+    collectionStatus: 'required-per-trade-evidence' });
   const capabilities = {
     chain: { id: '1' }, compiler: { exactBuild: '0.8.26+commit.8a97fa7a' }, onsiteTrading: { status: 'disabled' },
     profile: { profileId: 'programmable.direct-native-hook-graph.v1', profileRevision: 3, profileVersion: '3.6.0',
@@ -121,19 +128,27 @@ if (process.argv.includes('--self-test')) {
       mandatoryCanonicalFeeVaultTarget: false },
     graph: { minimumTargets: 3, maximumTargets: 16 },
     fundingModes: ['none', 'wallet-transaction-value'], liquidityModels: ['launch-seeded-concentrated-liquidity'],
-    programmableTradeFeePolicy: { policyHash: PROGRAMMABLE.tradeFeePolicyHash },
+    programmableTradeFeePolicy: tradeFeePolicy(),
+    currentTradeFeePolicy: { policyVersion: current.policy.policyVersion, recipient: A.platformRecipient },
   };
-  validateCapabilities(capabilities);
+  assert.equal(validateCapabilities(capabilities).tradeFeePolicy.recipient, A.platformRecipient);
+  // The earlier policy (consistent with its own hash), a hash that does not belong to its body, another recipient in
+  // the body, or a displayed recipient that differs from the hashed body must each fail.
   for (const change of [c => { c.profile.profileVersion = '3.3.0'; }, c => { c.feePolicy.programmableHundredthsOfBip = '1000'; },
-    c => { c.requestProfiles.freshSubmissionExactVersions = ['3.7.0']; }, c => { c.profile36Release.customHookAllowlistRequired = true; }]) {
+    c => { c.requestProfiles.freshSubmissionExactVersions = ['3.7.0']; }, c => { c.profile36Release.customHookAllowlistRequired = true; },
+    c => { c.programmableTradeFeePolicy = { ...structuredClone(earlier), collectionStatus: 'required-per-trade-evidence' }; },
+    c => { c.programmableTradeFeePolicy.policyHash = earlier.policyHash; },
+    c => { c.programmableTradeFeePolicy.policy.defaultCollection.recipient = A.graphFactory; },
+    c => { c.programmableTradeFeePolicy.collectionStatus = 'waived'; }, c => { c.programmableTradeFeePolicy = undefined; },
+    c => { c.currentTradeFeePolicy.recipient = earlier.policy.defaultCollection.recipient; }]) {
     const changed = structuredClone(capabilities);
     change(changed);
     assert.throws(() => validateCapabilities(changed));
   }
-  const readyz = { status: 'ready', publicProfile: { currentWriteProfileVersion: '3.6.0' },
-    programmableTradeFeePolicy: { policyHash: PROGRAMMABLE.tradeFeePolicyHash } };
+  const readyz = { status: 'ready', publicProfile: { currentWriteProfileVersion: '3.6.0' }, programmableTradeFeePolicy: tradeFeePolicy() };
   validateReadiness(readyz);
   assert.throws(() => validateReadiness({ ...readyz, publicProfile: { currentWriteProfileVersion: '3.3.0' } }));
+  assert.throws(() => validateReadiness({ ...readyz, programmableTradeFeePolicy: { ...structuredClone(earlier), collectionStatus: 'required-per-trade-evidence' } }));
   const manifest = { chainId: 1, launchStampRouter: { address: A.programmableRouter, runtimeCodeHash: hashes.programmableRouter,
     bindings: { graphFactory: A.graphFactory, graphFactoryRuntimeCodeHash: hashes.graphFactory,
       poolManager: A.poolManager, poolManagerRuntimeCodeHash: hashes.poolManager } } };
@@ -153,7 +168,7 @@ if (process.argv.includes('--self-test')) {
   crossed.launchStampRouter.runtimeCodeHash = hashes.programmableRouter;
   assert.throws(() => validateManifestRouter(crossed));
   await assert.rejects(() => rpc('eth_sendRawTransaction', ['0x']));
-  console.log('PASS: pool bindings, fee, liquidity, zap route, capabilities 3.6.0, manifest Router identity, and read-only RPC.');
+  console.log('PASS: pool bindings, fee, liquidity, zap route, capabilities 3.6.0, treasury policy and recipient, manifest Router identity, and read-only RPC.');
 } else {
   const config = JSON.parse(await readFile(new URL('../launch.config.json', import.meta.url), 'utf8'));
   const window = config.oracleWindowSeconds;

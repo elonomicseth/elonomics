@@ -75,7 +75,7 @@ export async function runReadiness(io) {
     const capabilities = validateCapabilities(await json(`${API_BASE}/v3/capabilities`));
     const readyz = validateReadiness(await json(`${API_BASE}/readyz`));
     return `profile ${capabilities.profile.profileVersion}, new requests ${capabilities.freshSubmissionExactVersions.join(',')}, `
-      + `platform fee ${capabilities.platformFee}, readyz ${readyz.serviceStatus}`;
+      + `platform fee ${capabilities.platformFee} to ${capabilities.tradeFeePolicy.recipient}, readyz ${readyz.serviceStatus}`;
   });
 
   await check('wallet', async () => {
@@ -167,7 +167,8 @@ export async function runReadiness(io) {
   await check('cliRelease', async () => {
     const pinned = JSON.parse(await io.readText('package-lock.json')).packages?.['node_modules/@programmable/launch'];
     const installed = JSON.parse(await io.readText('node_modules/.package-lock.json')).packages?.['node_modules/@programmable/launch'];
-    // The official release exists, so any other pin is wrong, not pending: older CLIs pack for the legacy Router.
+    // The official release exists, so any other pin is wrong, not pending: older CLIs pack for the legacy Router or
+    // only know the earlier treasury policy.
     if (pinned?.resolved !== RELEASE_URL) {
       throw Error(`package-lock.json pins @programmable/launch ${pinned?.version ?? 'from another source'}, not the official release ${PROGRAMMABLE.minimumCliVersion}; pin ${RELEASE_URL}`);
     }

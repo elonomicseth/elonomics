@@ -3,9 +3,10 @@ import { randomBytes, createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAddress, zeroAddress } from 'viem';
-import { PACKAGE_VERSION, packLaunch, validateLaunchFile } from '@programmable/launch';
+import { PACKAGE_VERSION, packFreshLaunch, validateLaunchFile } from '@programmable/launch';
 import { ADDRESSES as A, PROGRAMMABLE } from './constants.mjs';
 import { build, CONTRACTS } from './build.mjs';
+import { tradeFeePolicyHash } from './programmable.mjs';
 
 export const CONFIG_PATH = 'programmable-launch.config.json';
 export const SESSION_PATH = 'build/launch-session.json';
@@ -29,19 +30,62 @@ export function assertPlatformFeeBinding(launch) {
   }
 }
 
-// CLI 3.3.9 can only pack profile 3.3.0 (0.10%), which Programmable no longer accepts for new requests, and CLI 4.1.3
-// binds profile 3.6.0 requests to the legacy one-hour Router; 4.1.4 packs them for the successor Router.
+// CLI 3.3.9 can only pack profile 3.3.0 (0.10%), which Programmable no longer accepts for new requests, CLI 4.1.3
+// binds profile 3.6.0 requests to the legacy one-hour Router, and CLI 4.1.4 only knows the earlier treasury policy;
+// 4.1.5 packs for the successor Router with the treasury policy that current capabilities publish.
 export function assertCliVersion(version = PACKAGE_VERSION) {
   const want = PROGRAMMABLE.minimumCliVersion.split('.').map(Number);
   const have = String(version).split('.').map(Number);
   const first = have.findIndex((part, index) => part !== want[index]);
   if (have.length !== 3 || have.some(Number.isNaN) || (first !== -1 && have[first] < want[first])) {
-    throw Error(`@programmable/launch ${version} cannot pack profile ${PROGRAMMABLE.profileVersion} for the successor Router; install ${PROGRAMMABLE.minimumCliVersion} or newer`);
+    throw Error(`@programmable/launch ${version} cannot pack profile ${PROGRAMMABLE.profileVersion} for the successor Router and the current treasury; install ${PROGRAMMABLE.minimumCliVersion} or newer`);
   }
 }
 
-// The only package this repository may submit: profile 3.6.0, 2% total per side, 0.30% of it for Programmable,
-// bound to the successor Router and to the GraphFactory that ElonomicsLauncher accepts.
+/** ElonomicsHook.platformRecipient as compiled: the constant's literal, which must also appear in the runtime code. */
+export function hookPlatformRecipient(output) {
+  const found = [];
+  function visit(node, contract) {
+    if (node === null || typeof node !== 'object') return;
+    if (node.nodeType === 'ContractDefinition') contract = node.name;
+    if (contract === 'ElonomicsHook' && node.nodeType === 'VariableDeclaration' && node.name === 'platformRecipient'
+      && node.constant === true) found.push(node.value?.value);
+    for (const value of Object.values(node)) if (typeof value === 'object') visit(value, contract);
+  }
+  visit(output.sources['src/ElonomicsHook.sol']?.ast);
+  if (found.length !== 1) throw Error('ElonomicsHook.platformRecipient constant not found in the compiler output');
+  const recipient = getAddress(found[0]);
+  const runtime = output.contracts['src/ElonomicsHook.sol'].ElonomicsHook.evm.deployedBytecode.object.toLowerCase();
+  if (!runtime.includes(`73${recipient.slice(2).toLowerCase()}`)) throw Error('ElonomicsHook runtime code does not contain its platformRecipient');
+  return recipient;
+}
+
+// Every field that names who may claim or receive Programmable's share must be the treasury the hook pays, and the
+// embedded routed-trade policy must be exactly the pinned current policy, not the earlier one CLI 4.1.5 still accepts.
+export function assertPlatformFeeRecipient(launch, recipient = A.platformRecipient) {
+  const binding = launch.launchProfileSelection?.platformFeeBinding;
+  const policy = launch.launchProfile?.programmableTradeFeePolicy;
+  const fields = {
+    'launchProfile.platformFeePolicy.claimAuthority': launch.launchProfile?.platformFeePolicy?.claimAuthority,
+    'platformFeeBinding.claimAuthority': binding?.claimAuthority,
+    'platformFeeBinding.claimBinding.claimAuthority': binding?.claimBinding?.claimAuthority,
+    'platformFeeBinding.claimBinding.payoutRecipient': binding?.claimBinding?.payoutRecipient,
+    'programmableTradeFeePolicy.defaultCollection.recipient': policy?.defaultCollection?.recipient,
+    'programmableTradeFeePolicy.native30Waiver.recipient': policy?.native30Waiver?.recipient,
+  };
+  const wrong = Object.entries(fields).filter(([, value]) => typeof value !== 'string' || value.toLowerCase() !== recipient.toLowerCase());
+  if (binding?.claimBinding?.mode !== 'immutable-payout-recipient' || wrong.length) {
+    throw Error(`Package does not pay the platform fee to ${recipient}, ElonomicsHook.platformRecipient (${wrong.map(([field, value]) => `${field} ${value ?? 'none'}`).join(', ') || 'claim mode'}); do not submit launch.json, pack again with @programmable/launch ${PROGRAMMABLE.minimumCliVersion} or newer`);
+  }
+  let hash = null;
+  try { hash = tradeFeePolicyHash(policy); } catch { hash = null; }
+  if (hash !== PROGRAMMABLE.tradeFeePolicyHash) {
+    throw Error(`Package embeds routed-trade fee policy ${hash ?? 'none'}, not the current ${PROGRAMMABLE.tradeFeePolicyHash}; do not submit launch.json`);
+  }
+}
+
+// The only package this repository may submit: profile 3.6.0, 2% total per side, 0.30% of it for Programmable paid to
+// its current treasury, bound to the successor Router and to the GraphFactory that ElonomicsLauncher accepts.
 export function assertPackageProfile(launch) {
   assertPlatformFeeBinding(launch);
   const economics = launch.launchProfileSelection?.platformFeeBinding?.economics;
@@ -58,6 +102,7 @@ export function assertPackageProfile(launch) {
     || String(profile.graphFactory).toLowerCase() !== A.graphFactory.toLowerCase()) {
     throw Error(`Package targets Router ${profile.router ?? 'none'}, not the successor Router ${A.programmableRouter} with GraphFactory ${A.graphFactory}; do not submit launch.json, pack again with @programmable/launch ${PROGRAMMABLE.minimumCliVersion} or newer`);
   }
+  assertPlatformFeeRecipient(launch);
 }
 
 export async function inputDigest(config, root = '.') {
@@ -170,8 +215,14 @@ export function sessionAction(session, digest, zapQuote, nowMs = Date.now()) {
   return 'reuse';
 }
 
+// No profileVersion: a fresh CLI 4.1.5 pack reads /v3/capabilities and embeds the current profile and treasury policy,
+// and refuses to pack if payoutRecipient, taken from the compiled hook, is not that policy's recipient.
 export function makePackConfig(c, output, session) {
   const { supply, devBuyWei } = validateConfig(c);
+  const platformRecipient = hookPlatformRecipient(output);
+  if (platformRecipient !== A.platformRecipient) {
+    throw Error(`ElonomicsHook pays the platform fee to ${platformRecipient}, not ${A.platformRecipient}`);
+  }
   const ref = target => ({ target });
   const declarations = new Map();
   function visit(node) {
@@ -222,7 +273,7 @@ export function makePackConfig(c, output, session) {
     };
   });
   return {
-    schemaVersion: 'programmable.launch-pack-config.v3', profileVersion: PROGRAMMABLE.profileVersion, launchWallet: c.launchWallet,
+    schemaVersion: 'programmable.launch-pack-config.v3', launchWallet: c.launchWallet,
     chainId: '1', nonce: session.nonce,
     source: { root: '.', paths: SOURCE_PATHS,
       sourceLineageNonce: '1', publicOrigin: { url: c.publicSourceUrl, revision: c.publicSourceRevision } },
@@ -240,7 +291,7 @@ export function makePackConfig(c, output, session) {
           requestClaimsExecution: false, requiredVectorIds: ['liquidity.seeded.pool-active-liquidity',
             'liquidity.seeded.position-custody-and-withdrawal', 'liquidity.seeded.buy-and-sell'] } },
       fundingMode: 'wallet-transaction-value', accountingMode: 'inclusive-selected-total', assessmentBase: 'executed-gross-declared-quote',
-      feeCurrency: 'declared-quote-currency', claimMode: 'immutable-payout-recipient', payoutRecipient: A.platformRecipient,
+      feeCurrency: 'declared-quote-currency', claimMode: 'immutable-payout-recipient', payoutRecipient: platformRecipient,
       applicantSelectedBuyHundredthsOfBip: '20000', applicantSelectedSellHundredthsOfBip: '20000',
     },
     permitWindow: { validAfter: session.validAfter, deadline: session.deadline },
@@ -281,7 +332,7 @@ async function main() {
     targetCount: 4, feePartsPerMillion: { total: 20000, dividends: 10000, platform: 3000, dev: 7000 }, rewardDurationSeconds: 86400,
   }, null, 2)}\n`);
   await writeFile(CONFIG_PATH, `${JSON.stringify(makePackConfig(c, output, session), null, 2)}\n`, { mode: 0o600 });
-  const packed = await packLaunch({ configPath: CONFIG_PATH, outputPath: 'launch.json', receiptPath: 'launch.receipt.json' });
+  const packed = await packFreshLaunch({ configPath: CONFIG_PATH, outputPath: 'launch.json', receiptPath: 'launch.receipt.json' });
   const launch = JSON.parse(await readFile('launch.json', 'utf8'));
   assertPackageProfile(launch);
   const validated = await validateLaunchFile({ launchPath: 'launch.json', configPath: CONFIG_PATH });
@@ -289,6 +340,7 @@ async function main() {
   console.log(JSON.stringify({ scope: 'Local package only; addresses are predictions until deployed',
     cliVersion: PACKAGE_VERSION, profileVersion: launch.launchProfile.profileVersion,
     requestSha256: packed.requestSha256, reproducedFromConfig: validated.reproducedFromConfig,
+    platformFeeRecipient: launch.launchProfileSelection.platformFeeBinding.claimBinding.payoutRecipient,
     expectedDeployment: 'build/deployment.expected.json',
   }, null, 2));
 }

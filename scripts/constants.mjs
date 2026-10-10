@@ -4,9 +4,11 @@ import { encodePacked } from 'viem';
 export const ADDRESSES = Object.freeze({
   poolManager: '0x000000000004444c5dc75cB358380D2e3dE08A90',
   graphFactory: '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887',
-  // Successor Launch Stamp Router that CLI 4.1.4 binds into new profile 3.6.0 requests: the wallet's destination.
+  // Successor Launch Stamp Router that CLI 4.1.4 and later bind into new profile 3.6.0 requests: the wallet's destination.
   programmableRouter: '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3',
-  platformRecipient: '0x4957f49620AFf3Adbbe8195a4f633E49cc93376c',
+  // Programmable's current Ethereum treasury: ElonomicsHook.platformRecipient, the recipient of the routed-trade policy in
+  // /v3/capabilities, and the claim recipient CLI 4.1.5 binds into new requests.
+  platformRecipient: '0xD88539d3c4C460136a733A3Fd60cf6BF269079da',
   quote: '0xf6b1117ec07684D3958caD8BEb1b302bfD21103f',
   reward: '0xc9eef266834730340A55B6CC24621B31BAF55581',
   usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
@@ -33,10 +35,13 @@ export const ZAP_PATH = encodePacked(['address', 'uint24', 'address', 'uint24', 
 export const PROGRAMMABLE = Object.freeze({
   profileVersion: '3.6.0',
   platformFeeHundredthsOfBip: '3000',
-  minimumCliVersion: '4.1.4',
-  // Runtime code hash of ADDRESSES.programmableRouter, as pinned by CLI 4.1.4 (ROUTER_24H_RUNTIME_CODE_HASH).
+  minimumCliVersion: '4.1.5',
+  // Runtime code hash of ADDRESSES.programmableRouter, as pinned by CLI 4.1.4 and 4.1.5 (ROUTER_24H_RUNTIME_CODE_HASH).
   routerRuntimeCodeHash: '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3',
-  tradeFeePolicyHash: 'sha256:5956cdeee628ba84dfa5214efd532011e59c202e4e1c1830b1eca279d58d79d3',
+  // Live /v3/capabilities programmableTradeFeePolicy as read on 10 October 2026: policy
+  // programmable.ethereum-routed-native-fee.v2, whose recipients are ADDRESSES.platformRecipient.
+  tradeFeePolicyVersion: 'programmable.ethereum-routed-native-fee.v2',
+  tradeFeePolicyHash: 'sha256:e2025776ad3b12e6277575259cccf11444810365975209083fea534d8e70b4b5',
 });
 
 // Legacy one-hour Router that CLI 4.1.3 and earlier bound into requests. Never a destination for a new launch;

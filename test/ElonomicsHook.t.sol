@@ -39,6 +39,8 @@ contract ElonomicsHookTest {
     HookVm private constant vm = HookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address private constant DEV = address(0xD3);
     address private constant DIVIDENDS = address(0xD1);
+    /// @dev Programmable's current Ethereum treasury, written out here rather than read from the hook.
+    address private constant PLATFORM = 0xD88539d3c4C460136a733A3Fd60cf6BF269079da;
 
     PoolManager private manager;
     PoolSwapTest private router;
@@ -192,14 +194,16 @@ contract ElonomicsHookTest {
         uint256 dividends = hook.dividendsAccrued();
         uint256 platform = hook.platformAccrued();
         uint256 dev = hook.devAccrued();
+        require(hook.platformRecipient() == PLATFORM, "platform recipient is not Programmable's current treasury");
         vm.prank(address(0xCA11));
         require(hook.claimDividends() == dividends, "dividend claim result");
-        vm.prank(address(0xCA11));
+        // Even the developer, who receives its own share, cannot steer the platform share elsewhere.
+        vm.prank(DEV);
         require(hook.claimPlatform() == platform, "platform claim result");
         vm.prank(address(0xCA11));
         require(hook.claimDev() == dev, "dev claim result");
         require(quote.balanceOf(DIVIDENDS) == dividends, "dividend payout destination");
-        require(quote.balanceOf(hook.platformRecipient()) == platform, "platform payout destination");
+        require(quote.balanceOf(PLATFORM) == platform, "platform payout destination");
         require(quote.balanceOf(DEV) == dev, "dev payout destination");
         require(quote.balanceOf(address(0xCA11)) == 0, "caller stole payout");
         require(hook.totalFeesClaimed() == hook.totalFeesAccrued(), "claim conservation");

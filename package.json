@@ -22,7 +22,7 @@
     "@uniswap/v4-periphery": "1.0.3"
   },
   "devDependencies": {
-    "@programmable/launch": "https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v4.1.4/programmable-launch-4.1.4.tgz",
+    "@programmable/launch": "https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v4.1.5/programmable-launch-4.1.5.tgz",
     "solc": "0.8.26",
     "viem": "2.55.5"
   }

@@ -3,12 +3,26 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { units18, validateConfig, inputDigest, assertPlatformFeeBinding, assertFreshZapQuote, assertCliVersion, assertPackageProfile, sessionAction } from '../scripts/launch.mjs';
+import { units18, validateConfig, inputDigest, assertPlatformFeeBinding, assertFreshZapQuote, assertCliVersion, assertPackageProfile,
+  hookPlatformRecipient, sessionAction } from '../scripts/launch.mjs';
+import { cliTradeFeePolicies, tradeFeePolicyHash } from '../scripts/programmable.mjs';
+import { ADDRESSES, PROGRAMMABLE } from '../scripts/constants.mjs';
 
-// Literal values from the official CLI 4.1.4 release (ROUTER_24H and its runtime code hash), not read from constants.mjs.
+// Literal values from the official CLI 4.1.4 and 4.1.5 releases (ROUTER_24H and its runtime code hash) and from
+// Programmable's 10 October 2026 review (the current treasury), not read from constants.mjs.
 const SUCCESSOR_ROUTER = '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3';
 const SUCCESSOR_ROUTER_HASH = '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3';
 const GRAPH_FACTORY = '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887';
+const TREASURY = '0xD88539d3c4C460136a733A3Fd60cf6BF269079da';
+// Routed-trade fee policy bodies as CLI 4.1.5 publishes them: the current treasury policy and the earlier one.
+const POLICIES = await cliTradeFeePolicies();
+const CURRENT_POLICY = POLICIES.find(p => p.policy.defaultCollection.recipient === TREASURY);
+const EARLIER_POLICY = POLICIES.find(p => p !== CURRENT_POLICY);
+/** The recipient fields of a packed request, as CLI 4.1.5 writes them for the given policy. */
+const recipientFields = ({ policy }, recipient = policy.defaultCollection.recipient) => ({
+  launchProfile: { platformFeePolicy: { claimAuthority: recipient }, programmableTradeFeePolicy: structuredClone(policy) },
+  binding: { claimAuthority: recipient, claimBinding: { mode: 'immutable-payout-recipient', claimAuthority: recipient, payoutRecipient: recipient } },
+});
 
 test('decimal amounts are exact and reject rounded inputs', () => {
   assert.equal(units18('1.000000000000000001', 'amount'), 1000000000000000001n);
@@ -23,7 +37,7 @@ test('production configuration refuses incomplete real launch inputs', async () 
   assert.throws(() => validateConfig({ ...config, launchWallet: null }), /launchWallet/);
 });
 
-test('package must bind the 0.30% platform fee the hook charges in every policy field and target the successor Router', () => {
+test('package must bind the 0.30% platform fee the hook charges, pay it to the hook recipient and target the successor Router', () => {
   const bound = (policy, binding = policy) => ({
     launchProfile: { platformFeePolicy: { programmableFeeHundredthsOfBip: policy } },
     launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: binding } },
@@ -32,17 +46,22 @@ test('package must bind the 0.30% platform fee the hook charges in every policy 
   assert.throws(() => assertPlatformFeeBinding(bound('1000')), /binds platform fee 1000/);
   assert.throws(() => assertPlatformFeeBinding(bound('3000', '1000')), /3000, 1000/);
   assert.throws(() => assertPlatformFeeBinding({}), /binds platform fee none/);
-  assert.doesNotThrow(() => assertCliVersion('4.1.4'));
+  assert.doesNotThrow(() => assertCliVersion('4.1.5'));
   assert.doesNotThrow(() => assertCliVersion('4.2.0'));
-  assert.throws(() => assertCliVersion('4.1.3'), /4\.1\.4 or newer/);
-  assert.throws(() => assertCliVersion('3.3.9'), /4\.1\.4 or newer/);
-  const pkg = (profileVersion, fee = '3000') => ({
-    launchProfile: { profileVersion, platformFeePolicy: { programmableFeeHundredthsOfBip: fee },
-      ...(profileVersion === '3.6.0' ? { programmableTradeFeePolicy: { ratePpm: '3000' } } : {}),
-      router: SUCCESSOR_ROUTER, routerRuntimeCodeHash: SUCCESSOR_ROUTER_HASH, graphFactory: GRAPH_FACTORY },
-    launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: fee, economics: Object.fromEntries(['buy', 'sell']
-      .map(side => [side, { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: String(20000 - Number(fee)) }])) } },
-  });
+  // 4.1.4 only knows the earlier treasury policy; 4.1.3 also packs for the legacy Router.
+  assert.throws(() => assertCliVersion('4.1.4'), /4\.1\.5 or newer/);
+  assert.throws(() => assertCliVersion('4.1.3'), /4\.1\.5 or newer/);
+  assert.throws(() => assertCliVersion('3.3.9'), /4\.1\.5 or newer/);
+  const pkg = (profileVersion, fee = '3000') => {
+    const fields = recipientFields(CURRENT_POLICY);
+    return {
+      launchProfile: { profileVersion, platformFeePolicy: { ...fields.launchProfile.platformFeePolicy, programmableFeeHundredthsOfBip: fee },
+        ...(profileVersion === '3.6.0' ? { programmableTradeFeePolicy: fields.launchProfile.programmableTradeFeePolicy } : {}),
+        router: SUCCESSOR_ROUTER, routerRuntimeCodeHash: SUCCESSOR_ROUTER_HASH, graphFactory: GRAPH_FACTORY },
+      launchProfileSelection: { platformFeeBinding: { ...fields.binding, programmableFeeHundredthsOfBip: fee, economics: Object.fromEntries(['buy', 'sell']
+        .map(side => [side, { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: String(20000 - Number(fee)) }])) } },
+    };
+  };
   assert.doesNotThrow(() => assertPackageProfile(pkg('3.6.0')));
   assert.throws(() => assertPackageProfile(pkg('3.3.0', '1000')), /binds platform fee 1000/);
   assert.throws(() => assertPackageProfile(pkg('3.3.0')), /profile 3\.6\.0/);
@@ -61,6 +80,56 @@ test('package must bind the 0.30% platform fee the hook charges in every policy 
   const lowercase = pkg('3.6.0');
   lowercase.launchProfile.router = SUCCESSOR_ROUTER.toLowerCase();
   assert.doesNotThrow(() => assertPackageProfile(lowercase));
+
+  // A request packed with the earlier treasury policy (what an explicit-version pack still produces) must be packed again,
+  // as must any request whose claim fields or embedded policy name anyone but the treasury the hook pays.
+  const earlier = pkg('3.6.0');
+  const earlierFields = recipientFields(EARLIER_POLICY);
+  Object.assign(earlier.launchProfile.platformFeePolicy, earlierFields.launchProfile.platformFeePolicy);
+  earlier.launchProfile.programmableTradeFeePolicy = earlierFields.launchProfile.programmableTradeFeePolicy;
+  Object.assign(earlier.launchProfileSelection.platformFeeBinding, earlierFields.binding);
+  assert.throws(() => assertPackageProfile(earlier), new RegExp(`does not pay the platform fee to ${TREASURY}`));
+  for (const change of [
+    p => { p.launchProfileSelection.platformFeeBinding.claimBinding.payoutRecipient = GRAPH_FACTORY; },
+    p => { p.launchProfileSelection.platformFeeBinding.claimBinding.claimAuthority = GRAPH_FACTORY; },
+    p => { p.launchProfileSelection.platformFeeBinding.claimAuthority = undefined; },
+    p => { p.launchProfileSelection.platformFeeBinding.claimBinding.mode = 'claim-authority-selected-recipient'; },
+    p => { p.launchProfile.platformFeePolicy.claimAuthority = GRAPH_FACTORY; },
+    p => { p.launchProfile.programmableTradeFeePolicy.native30Waiver.recipient = GRAPH_FACTORY; },
+  ]) {
+    const other = pkg('3.6.0');
+    change(other);
+    assert.throws(() => assertPackageProfile(other), /does not pay the platform fee/);
+  }
+  const reworded = pkg('3.6.0');
+  reworded.launchProfile.programmableTradeFeePolicy.rounding = 'changed';
+  assert.throws(() => assertPackageProfile(reworded), /routed-trade fee policy/);
+});
+
+test('hook, constants and the CLI 4.1.5 current treasury policy name the same platform recipient', async () => {
+  assert.equal(CURRENT_POLICY.policyHash, PROGRAMMABLE.tradeFeePolicyHash);
+  assert.equal(tradeFeePolicyHash(CURRENT_POLICY.policy), CURRENT_POLICY.policyHash);
+  assert.equal(tradeFeePolicyHash(EARLIER_POLICY.policy), EARLIER_POLICY.policyHash);
+  assert.notEqual(EARLIER_POLICY.policy.defaultCollection.recipient, TREASURY);
+  assert.equal(CURRENT_POLICY.policy.native30Waiver.recipient, TREASURY);
+  assert.equal(ADDRESSES.platformRecipient, TREASURY);
+  const source = await readFile(new URL('../src/ElonomicsHook.sol', import.meta.url), 'utf8');
+  const constants = [...source.matchAll(/address public constant platformRecipient = (0x[0-9a-fA-F]{40});/g)];
+  assert.deepEqual(constants.map(m => m[1]), [TREASURY]);
+});
+
+test('the pack recipient is read from the compiled hook and must be in its runtime code', () => {
+  const output = (recipient, runtime) => ({
+    sources: { 'src/ElonomicsHook.sol': { ast: { nodeType: 'SourceUnit', nodes: [{ nodeType: 'ContractDefinition', name: 'ElonomicsHook',
+      nodes: [{ nodeType: 'VariableDeclaration', name: 'platformRecipient', constant: true, value: { nodeType: 'Literal', value: recipient } }] }] } } },
+    contracts: { 'src/ElonomicsHook.sol': { ElonomicsHook: { evm: { deployedBytecode: { object: runtime } } } } },
+  });
+  const pushed = `608073${TREASURY.slice(2).toLowerCase()}5b`;
+  assert.equal(hookPlatformRecipient(output(TREASURY, pushed)), TREASURY);
+  assert.throws(() => hookPlatformRecipient(output(TREASURY, '6080')), /runtime code/);
+  const missing = output(TREASURY, pushed);
+  missing.sources['src/ElonomicsHook.sol'].ast.nodes[0].name = 'OtherHook';
+  assert.throws(() => hookPlatformRecipient(missing), /not found/);
 });
 
 test('retry fingerprint covers bundled scripts, lockfile and image bytes', async () => {

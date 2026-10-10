@@ -26,7 +26,9 @@ import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 contract ElonomicsHook is BaseHook, IUnlockCallback, ReentrancyGuardTransient {
     using CurrencyLibrary for Currency;
 
-    address public constant platformRecipient = 0x4957f49620AFf3Adbbe8195a4f633E49cc93376c;
+    /// @notice Programmable's current Ethereum treasury (policy programmable.ethereum-routed-native-fee.v2).
+    ///         claimPlatform() pays the 0.3% share only to this address, and nothing can change it.
+    address public constant platformRecipient = 0xD88539d3c4C460136a733A3Fd60cf6BF269079da;
     address public immutable token;
     address public immutable quote;
     address public immutable initializer;

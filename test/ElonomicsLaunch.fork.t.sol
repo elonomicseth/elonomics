@@ -57,6 +57,8 @@ contract ElonomicsLaunchForkTest {
     address private constant TSLA = 0xf6b1117ec07684D3958caD8BEb1b302bfD21103f;
     address private constant QUOTE_POOL = 0x31227b50eCCDC9C589826AA2D9E7C5619B1895Da;
     address private constant REWARD_POOL = 0x0461c60Ad5fC24cB1fc075b7f202095819De6944;
+    /// @dev Programmable's current Ethereum treasury, the hook's fixed platform recipient.
+    address private constant PLATFORM = 0xD88539d3c4C460136a733A3Fd60cf6BF269079da;
     /// @dev WETH -0.05%-> USDC -1%-> TSLA: the launcher's zap route, also used by the router buy below.
     bytes private constant ZAP_PATH =
         hex"c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48002710f6b1117ec07684d3958cad8beb1b302bfd21103f";
@@ -134,7 +136,11 @@ contract ElonomicsLaunchForkTest {
         uint256 devTslaBefore = IERC20(TSLA).balanceOf(DEV);
         require(hook.claimDev() > 0 && IERC20(TSLA).balanceOf(DEV) > devTslaBefore, "dev fee claim");
         require(hook.claimDividends() > 0 && IERC20(TSLA).balanceOf(address(processor)) > 0, "dividend claim");
-        require(hook.claimPlatform() > 0, "platform claim");
+        uint256 platformFee = hook.platformAccrued();
+        uint256 platformTslaBefore = IERC20(TSLA).balanceOf(PLATFORM);
+        require(hook.platformRecipient() == PLATFORM, "platform recipient");
+        require(platformFee > 0 && hook.claimPlatform() == platformFee, "platform claim");
+        require(IERC20(TSLA).balanceOf(PLATFORM) == platformTslaBefore + platformFee, "platform fee destination");
     }
 
     /// @dev TSLA-per-ELON tick at the target FDV, rounded to the nearest multiple of 60 like planZapQuote.

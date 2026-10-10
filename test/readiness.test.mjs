@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { PROGRAMMABLE } from '../scripts/constants.mjs';
+import { cliTradeFeePolicies } from '../scripts/programmable.mjs';
 import { RELEASE_URL, exitCode, formatLine, runReadiness } from '../scripts/readiness.mjs';
 
 const NOW = Date.parse('2026-10-08T12:00:00.000Z');
@@ -13,6 +14,13 @@ const ETH = 10n ** 18n;
 const QUOTED_AT = NOW - 5 * 60_000;
 const NONCE = `0x${'11'.repeat(32)}`;
 const digestOf = c => createHash('sha256').update(JSON.stringify(c)).digest('hex');
+// Programmable's current treasury and the routed-trade policy bodies CLI 4.1.5 publishes (current and earlier).
+const TREASURY = '0xD88539d3c4C460136a733A3Fd60cf6BF269079da';
+const POLICIES = await cliTradeFeePolicies();
+const CURRENT = POLICIES.find(p => p.policyHash === PROGRAMMABLE.tradeFeePolicyHash);
+const EARLIER = POLICIES.find(p => p !== CURRENT);
+const tradeFeePolicy = (entry = CURRENT) => ({ policyHash: entry.policyHash, policy: structuredClone(entry.policy),
+  collectionStatus: 'required-per-trade-evidence' });
 
 const config = () => ({
   chainId: 1, name: 'Elonomics', symbol: 'ELON', description: 'Fixture description that is long enough.',
@@ -38,22 +46,27 @@ const capabilities = () => ({
     mandatoryCanonicalFeeVaultTarget: false },
   graph: { minimumTargets: 3, maximumTargets: 16 },
   fundingModes: ['wallet-transaction-value'], liquidityModels: ['launch-seeded-concentrated-liquidity'],
-  programmableTradeFeePolicy: { policyHash: PROGRAMMABLE.tradeFeePolicyHash },
+  programmableTradeFeePolicy: tradeFeePolicy(),
+  currentTradeFeePolicy: { policyVersion: CURRENT.policy.policyVersion, recipient: TREASURY },
 });
 
-const launch = () => ({
-  nonce: NONCE,
-  launchProfile: { profileVersion: '3.6.0', platformFeePolicy: { programmableFeeHundredthsOfBip: '3000' },
-    programmableTradeFeePolicy: { ratePpm: '3000' }, router: '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3',
-    routerRuntimeCodeHash: '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3',
-    graphFactory: '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887' },
-  launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: '3000', economics: {
-    buy: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' },
-    sell: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' } } } },
-});
+const launch = (entry = CURRENT) => {
+  const recipient = entry.policy.defaultCollection.recipient;
+  return {
+    nonce: NONCE,
+    launchProfile: { profileVersion: '3.6.0', platformFeePolicy: { programmableFeeHundredthsOfBip: '3000', claimAuthority: recipient },
+      programmableTradeFeePolicy: structuredClone(entry.policy), router: '0xBE4bF6Ac8c6F012E1C8f25747A9fBccB2FDAC4C3',
+      routerRuntimeCodeHash: '0xf2d611fb92718c63cf5767300e79d7c9b49480b2e9001448b96c1385f4edb6f3',
+      graphFactory: '0xB012e4A8F2c5FC4E8E4faCA9D5Ad6FfF13FBA887' },
+    launchProfileSelection: { platformFeeBinding: { programmableFeeHundredthsOfBip: '3000', claimAuthority: recipient,
+      claimBinding: { mode: 'immutable-payout-recipient', claimAuthority: recipient, payoutRecipient: recipient }, economics: {
+        buy: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' },
+        sell: { effectiveTotalHundredthsOfBip: '20000', projectHundredthsOfBip: '17000' } } } },
+  };
+};
 
-const OLD_RELEASE_URL = 'https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v4.1.3/programmable-launch-4.1.3.tgz';
-const lock = (resolved = RELEASE_URL, integrity = 'sha512-release', version = '4.1.4') => JSON.stringify({ packages: {
+const OLD_RELEASE_URL = 'https://github.com/programmablehq/PROGRAMMABLE/releases/download/programmable-launch-v4.1.4/programmable-launch-4.1.4.tgz';
+const lock = (resolved = RELEASE_URL, integrity = 'sha512-release', version = '4.1.5') => JSON.stringify({ packages: {
   'node_modules/@programmable/launch': { version, resolved, integrity } } });
 
 /** Every dependency of runReadiness, ready to launch unless a test changes it. */
@@ -69,14 +82,14 @@ function io(change = {}) {
   const responses = {
     'https://api.programmable.market/v3/capabilities': { status: 200, body: capabilities() },
     'https://api.programmable.market/readyz': { status: 200, body: { status: 'ready',
-      publicProfile: { currentWriteProfileVersion: '3.6.0' }, programmableTradeFeePolicy: { policyHash: PROGRAMMABLE.tradeFeePolicyHash } } },
+      publicProfile: { currentWriteProfileVersion: '3.6.0' }, programmableTradeFeePolicy: tradeFeePolicy() } },
     'https://api.github.com/repos/example/elonomics': { status: 200, body: { private: false } },
     [`https://api.github.com/repos/example/elonomics/commits/${REVISION}`]: { status: 200, body: { sha: REVISION } },
     'https://example.com': { status: 200, body: {} },
     ...change.responses,
   };
   return {
-    now: NOW, nodeVersion: '24.14.0', cliVersion: '4.1.4', env: { PROGRAMMABLE_API_KEY: SECRET_KEY },
+    now: NOW, nodeVersion: '24.14.0', cliVersion: '4.1.5', env: { PROGRAMMABLE_API_KEY: SECRET_KEY },
     readText: async file => {
       if (files[file] === undefined) throw Error(`ENOENT: ${file}`);
       return files[file];
@@ -147,14 +160,23 @@ test('readiness fails on stale quotes, old runtimes, wrong profiles, low balance
     source: 'FAIL', image: 'PASS', website: 'FAIL', apiKey: 'PASS', package: 'FAIL', cliRelease: 'FAIL' });
   assert.equal(exitCode(results), 1);
   assert.match(results.find(r => r.id === 'wallet').detail, /need 0\.04 ETH/);
-  assert.match(results.find(r => r.id === 'runtime').detail, /4\.1\.4 or newer/);
+  assert.match(results.find(r => r.id === 'runtime').detail, /4\.1\.5 or newer/);
   assert.match(results.find(r => r.id === 'package').detail, /permit window/);
 
-  // The official 4.1.4 release exists: a 4.1.3 pin, which packs for the legacy Router, fails even when node_modules matches it.
-  const oldPin = lock(OLD_RELEASE_URL, 'sha512-old', '4.1.3');
+  // The official 4.1.5 release exists: a 4.1.4 pin, which only knows the earlier treasury policy, fails even when
+  // node_modules matches it.
+  const oldPin = lock(OLD_RELEASE_URL, 'sha512-old', '4.1.4');
   const oldCli = await runReadiness(io({ files: { 'package-lock.json': oldPin, 'node_modules/.package-lock.json': oldPin } }));
   assert.equal(statuses(oldCli).cliRelease, 'FAIL');
-  assert.match(oldCli.find(r => r.id === 'cliRelease').detail, /pins @programmable\/launch 4\.1\.3, not the official release 4\.1\.4/);
+  assert.match(oldCli.find(r => r.id === 'cliRelease').detail, /pins @programmable\/launch 4\.1\.4, not the official release 4\.1\.5/);
+  // A package that pays the earlier treasury, or a server that publishes another treasury policy, blocks submission.
+  const earlierTreasury = await runReadiness(io({ files: { 'launch.json': JSON.stringify(launch(EARLIER)) } }));
+  assert.equal(statuses(earlierTreasury).package, 'FAIL');
+  assert.match(earlierTreasury.find(r => r.id === 'package').detail, new RegExp(`does not pay the platform fee to ${TREASURY}`));
+  const earlierPolicy = await runReadiness(io({ responses: { 'https://api.programmable.market/v3/capabilities': { status: 200,
+    body: { ...capabilities(), programmableTradeFeePolicy: tradeFeePolicy(EARLIER) } } } }));
+  assert.equal(statuses(earlierPolicy).programmable, 'FAIL');
+  assert.match(earlierPolicy.find(r => r.id === 'programmable').detail, /routed-trade fee policy changed/);
   const legacyPackage = launch();
   legacyPackage.launchProfile.router = '0x8622DD5bAb44185f2A458ac90384Ac99248f8d56';
   legacyPackage.launchProfile.routerRuntimeCodeHash = '0x40e27ecf201761d5eb66bc4f2d5c6124831ef078d7baf458ca5f41b1a8108546';
