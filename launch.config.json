@@ -16,7 +16,7 @@
   "imageSourcePath": "assets/elonomics.png",
   "imageUri": "ipfs://bafybeifcryagcsvpym36yfjmarl5topoofdzumay6tsmjbn33g5qoogb54",
   "publicSourceUrl": "https://github.com/elonomicseth/elonomics",
-  "publicSourceRevision": "5722768eadfb817612248e07ffe3736037eed219",
+  "publicSourceRevision": "f378cad75e1d37297c9281b72043a1ec3fbd9378",
   "oracleWindowSeconds": 1800,
   "maximumOracleSlippageBps": 100
 }
